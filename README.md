@@ -18,7 +18,7 @@ An enterprise-grade, event-driven AI automation workflow built with **n8n**, **G
 ---
 
 ## 📐 Workflow Architecture
-![System Architecture](Shopify AI Abandoned Cart Arbitrage Agent.jpg)
+![System Architecture](./Shopify%20AI%20Abandoned%20Cart%20Arbitrage%20Agent.jpg)
 
 [Shopify Webhook: Checkout Created]
 │
