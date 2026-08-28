@@ -1,0 +1,576 @@
+{
+  "name": "Shopify AI Abandoned Cart Arbitrage Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "shopify-abandoned-cart",
+        "options": {}
+      },
+      "id": "c140b31e-a48d-4a3f-b242-db999bd10525",
+      "name": "Shopify Webhook - Checkout Created",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        -144
+      ],
+      "webhookId": "shopify-abandoned-cart-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\nconst checkout = body.checkout || body;\n\nconst customerPhone = checkout.phone || \n                      checkout.billing_address?.phone || \n                      checkout.shipping_address?.phone || null;\n\nconst customerEmail = checkout.email || null;\nconst customerFirstName = checkout.billing_address?.first_name || \n                          checkout.shipping_address?.first_name || \n                          checkout.customer?.first_name || 'Friend';\n\nconst lineItems = checkout.line_items || [];\nconst cartItems = lineItems.map(item => ({\n  name: item.title || item.name,\n  quantity: item.quantity,\n  price: item.price,\n  variant: item.variant_title || ''\n}));\n\nconst cartTotal = checkout.total_price || checkout.subtotal_price || '0.00';\nconst checkoutId = checkout.id || checkout.token;\nconst checkoutToken = checkout.token || checkout.id;\nconst currency = checkout.currency || 'USD';\n\nif (!customerPhone && !customerEmail) {\n  return [{ json: { skip: true, reason: 'No contact info available' } }];\n}\n\nif (cartItems.length === 0) {\n  return [{ json: { skip: true, reason: 'Empty cart' } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    checkoutId,\n    checkoutToken,\n    customerPhone,\n    customerEmail,\n    customerFirstName,\n    cartItems,\n    cartTotal,\n    currency,\n    cartItemsText: cartItems.map(i => `${i.quantity}x ${i.name}${i.variant ? ' (' + i.variant + ')' : ''}`).join(', ')\n  }\n}];"
+      },
+      "id": "7d5131f3-26ec-4e70-9ba0-f5c6bc25588f",
+      "name": "Extract Checkout Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition_skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d837d2fe-7f02-43f6-a5ec-7b5b39bfcb92",
+      "name": "Has Contact Info?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "minutes"
+      },
+      "id": "91322ecc-fb7a-462a-9cef-b2ae94f0ea9b",
+      "name": "Wait 15 Minutes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        48,
+        -48
+      ],
+      "webhookId": "wait-15-min"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{ $vars.SHOPIFY_STORE_DOMAIN }}/admin/api/2024-01/orders.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $('Extract Checkout Data').item.json.customerEmail }}"
+            },
+            {
+              "name": "financial_status",
+              "value": "paid"
+            },
+            {
+              "name": "created_at_min",
+              "value": "={{ new Date(Date.now() - 30 * 60 * 1000).toISOString() }}"
+            },
+            {
+              "name": "limit",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "25d20017-10c7-4c1b-a10e-d061d850602c",
+      "name": "Check If Already Paid",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        256,
+        -16
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2J3HiAoIDETYEYWQ",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ordersData = $input.first().json;\nconst orders = ordersData.orders || [];\n\nif (orders.length > 0) {\n  return [{ json: { alreadyPaid: true, reason: 'Customer already completed purchase' } }];\n}\n\nreturn [{ json: { alreadyPaid: false } }];"
+      },
+      "id": "aa77ed61-6624-4a91-8776-110abe68b1c5",
+      "name": "Order Status Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -624,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition_paid",
+              "leftValue": "={{ $json.alreadyPaid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d77b0e4f-30b2-4b53-bb99-36702ba1351b",
+      "name": "Already Paid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $vars.SHOPIFY_STORE_DOMAIN }}/admin/api/2024-01/price_rules.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "price_rule",
+              "value": "={\n  \"title\": \"RECOVER10_{{ $('Extract Checkout Data').item.json.checkoutToken }}\",\n  \"target_type\": \"line_item\",\n  \"target_selection\": \"all\",\n  \"allocation_method\": \"across\",\n  \"value_type\": \"percentage\",\n  \"value\": \"-10.0\",\n  \"customer_selection\": \"all\",\n  \"starts_at\": \"{{ new Date().toISOString() }}\",\n  \"ends_at\": \"{{ new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() }}\",\n  \"usage_limit\": 1,\n  \"once_per_customer\": true\n}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6697ae9a-3e39-4987-8406-724e040710fe",
+      "name": "Create Price Rule (10% Off)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -128,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2J3HiAoIDETYEYWQ",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $vars.SHOPIFY_STORE_DOMAIN }}/admin/api/2024-01/price_rules/{{ $json.price_rule.id }}/discount_codes.json",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "discount_code",
+              "value": "={ \"code\": \"SAVE10NOW{{ $('Extract Checkout Data').item.json.checkoutToken.toString().slice(-6).toUpperCase() }}\" }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cd33c689-43e7-4fcd-b713-716c77c1ad9c",
+      "name": "Generate Discount Code",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "llama-3.3-70b-versatile"
+            },
+            {
+              "name": "messages",
+              "value": "=[\n  {\n    \"role\": \"system\",\n    \"content\": \"You are a friendly gym equipment sales assistant. Write short, natural WhatsApp messages (max 3 lines). Sound like a helpful friend, NOT a salesman. Be genuine and casual. Never use emojis excessively. Always mention the specific product they left behind.\"\n  },\n  {\n    \"role\": \"user\",\n    \"content\": \"Write a WhatsApp recovery message for: Customer Name: {{ $('Extract Checkout Data').item.json.customerFirstName }}, Left in cart: {{ $('Extract Checkout Data').item.json.cartItemsText }}, Cart Total: {{ $('Extract Checkout Data').item.json.currency }} {{ $('Extract Checkout Data').item.json.cartTotal }}, Discount Code: {{ $('Generate Discount Code').item.json.discount_code.code }} (10% off, expires in 24 hours). Keep it under 3 lines, casual English, end with the discount code naturally.\"\n  }\n]"
+            },
+            {
+              "name": "max_tokens",
+              "value": 200
+            },
+            {
+              "name": "temperature",
+              "value": 0.7
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d0a1a4a3-e892-4b55-a904-9fecaa3f5afe",
+      "name": "Groq AI - Generate Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2J3HiAoIDETYEYWQ",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const groqResponse = $input.first().json;\nconst aiMessage = groqResponse.choices[0].message.content.trim();\n\nconst checkoutData = $('Extract Checkout Data').item.json;\nconst discountCode = $('Generate Discount Code').item.json.discount_code.code;\n\nconst phone = checkoutData.customerPhone;\nlet formattedPhone = phone ? phone.replace(/[\\s\\-\\(\\)\\+]/g, '') : null;\nif (formattedPhone && !formattedPhone.startsWith('92') && !formattedPhone.startsWith('+')) {\n  formattedPhone = '92' + formattedPhone.replace(/^0/, '');\n}\n\nreturn [{\n  json: {\n    aiMessage,\n    discountCode,\n    formattedPhone,\n    customerFirstName: checkoutData.customerFirstName,\n    cartItemsText: checkoutData.cartItemsText,\n    checkoutId: checkoutData.checkoutId\n  }\n}];"
+      },
+      "id": "4b77c2aa-6d66-44c4-b806-5d3abdbf0d1d",
+      "name": "Prepare WhatsApp Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $vars.WHATSAPP_PHONE_NUMBER_ID }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "a4950a32-45f9-4727-a8ca-8be436a5da2c",
+      "name": "Send WhatsApp Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        448
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2J3HiAoIDETYEYWQ",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $vars.SHOPIFY_STORE_DOMAIN }}/admin/api/2024-01/checkouts/{{ $('Extract Checkout Data').item.json.checkoutToken }}/tags.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "checkout",
+              "value": "={ \"tags\": \"AI_Contacted,AI_Recovery_Pending\" }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5da67bbf-8018-40c1-8256-078628720496",
+      "name": "Tag - AI_Contacted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        48,
+        448
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2J3HiAoIDETYEYWQ",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('✅ Abandoned Cart Recovery Complete!');\nconsole.log('Customer:', $('Prepare WhatsApp Message').item.json.customerFirstName);\nconsole.log('Cart:', $('Prepare WhatsApp Message').item.json.cartItemsText);\nconsole.log('Discount Code:', $('Prepare WhatsApp Message').item.json.discountCode);\nconsole.log('WhatsApp sent to:', $('Prepare WhatsApp Message').item.json.formattedPhone);\n\nreturn [{\n  json: {\n    status: 'success',\n    message: 'Recovery workflow completed',\n    customer: $('Prepare WhatsApp Message').item.json.customerFirstName,\n    discountCode: $('Prepare WhatsApp Message').item.json.discountCode,\n    whatsappSentTo: $('Prepare WhatsApp Message').item.json.formattedPhone,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "c2acd063-3e28-42fd-bbbf-7e7e9845c722",
+      "name": "Success Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('⏹️ Workflow stopped - Customer already paid or no contact info');\nreturn [{ json: { status: 'skipped', reason: 'Already paid or no contact info' } }];"
+      },
+      "id": "e5b094fb-842c-41b1-9ca0-ea57669037e4",
+      "name": "Stop - Already Paid",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('⏹️ Workflow stopped - No contact info found');\nreturn [{ json: { status: 'skipped', reason: 'No contact info' } }];"
+      },
+      "id": "3e40e2f9-569a-48dd-b6fe-4e4a8ce4701e",
+      "name": "Stop - No Contact Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        -224
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -656,
+        16
+      ],
+      "id": "c9736c83-cf74-4b93-81ac-6046d6cef77f",
+      "name": "When clicking ‘Execute workflow’"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Shopify Webhook - Checkout Created": {
+      "main": [
+        [
+          {
+            "node": "Extract Checkout Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Checkout Data": {
+      "main": [
+        [
+          {
+            "node": "Has Contact Info?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Contact Info?": {
+      "main": [
+        [
+          {
+            "node": "Stop - No Contact Info",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 15 Minutes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Check If Already Paid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Already Paid": {
+      "main": [
+        [
+          {
+            "node": "Order Status Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Order Status Check": {
+      "main": [
+        [
+          {
+            "node": "Already Paid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Paid?": {
+      "main": [
+        [
+          {
+            "node": "Stop - Already Paid",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Price Rule (10% Off)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Price Rule (10% Off)": {
+      "main": [
+        [
+          {
+            "node": "Generate Discount Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Discount Code": {
+      "main": [
+        [
+          {
+            "node": "Groq AI - Generate Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq AI - Generate Message": {
+      "main": [
+        [
+          {
+            "node": "Prepare WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Tag - AI_Contacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag - AI_Contacted": {
+      "main": [
+        [
+          {
+            "node": "Success Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Extract Checkout Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "90c35f58-43ca-4ea0-bfd1-2aaa23444e22",
+  "meta": {
+    "instanceId": "17c3d54b46a3702e6112a3cca58396f3167c03ea2410f87f18155a7a53c0026a"
+  },
+  "id": "I1izMPy45o1KD693",
+  "tags": []
+}
